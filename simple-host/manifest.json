@@ -1,0 +1,19 @@
+{
+  "include": ["$(MODDABLE)/examples/manifest_base.json"],
+  "modules": {
+    "*": ["./main", "$(MODULES)/base/modules/*"]
+  },
+  "defines": {
+    "XS_MODS": 1
+  },
+  "preload": ["modules"],
+  "strip": [],
+  "build": {
+    "name": "SimpleHost"
+  },
+  "creation": {
+    "keys": {
+      "available": 256
+    }
+  }
+}

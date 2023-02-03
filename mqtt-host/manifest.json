@@ -1,0 +1,56 @@
+{
+  "include": ["$(MODDABLE)/examples/manifest_base.json", "$(MODDABLE)/examples/manifest_net.json"],
+  "modules": {
+    "*": [
+      "./config",
+      "./main",
+      "$(MODULES)/base/modules/*",
+      "$(MODULES)/network/sntp/*",
+      "$(MODULES)/network/dns/moddnsparser"
+    ],
+    "dns": "$(MODULES)/network/dns/dns",
+    "dns/parser": "$(MODULES)/network/dns/dnsparser",
+    "dns/serializer": "$(MODULES)/network/dns/dnsserializer",
+    "mqtt": "../modules/network/mqtt/mqtt",
+    "async-mqtt": "../modules/network/mqtt/async-mqtt",
+    "embedded:network/dns/resolver/udp": "$(MODDABLE)/examples/io/udp/dns/dns",
+    "embedded:network/mqtt/client": "../modules/network/mqtt/mqttclient"
+  },
+  "platforms": {
+    "esp": {
+      "modules": {
+        "~": ["$(BUILD)/devices/esp/setup/network"]
+      }
+    },
+    "esp32": {
+      "modules": {
+        "~": ["$(BUILD)/devices/esp32/setup/network"]
+      }
+    }
+  },
+  "defines": {
+    "XS_MODS": 1
+  },
+  "preload": [
+    "modules",
+    "config",
+    "embedded:network/dns/resolver",
+    "sntp",
+    "dns",
+    "dns/parser",
+    "dns/serializer",
+    "embedded:network/mqtt/client",
+    "mqtt",
+    "async-mqtt"
+  ],
+  "strip": [],
+  "build": {
+    "name": "MQTTHost"
+  },
+  "creation": {
+    "static": 65536,
+    "keys": {
+      "available": 256
+    }
+  }
+}

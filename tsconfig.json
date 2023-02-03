@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["es2020"],
+    "module": "es2020",
+    "target": "ES2020",
+    "baseUrl": "./",
+    "sourceMap": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "typeRoots": ["./moddable/typings"],
+    "paths": {
+      "sx1276-fsk": ["./modules/drivers/sx1276-fsk/sx1276-fsk"],
+      "mqtt": ["./modules/network/mqtt/mqtt"],
+      "async-mqtt": ["./modules/network/mqtt/async-mqtt"]
+    }
+  },
+  "include": ["**/*.ts"]
+}
