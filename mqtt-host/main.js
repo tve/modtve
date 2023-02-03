@@ -6,22 +6,19 @@ import WiFi from "wifi"
 import Net from "net"
 import Timer from "timer"
 import { connectAsync } from "async-mqtt"
+import creds from "./creds"
 const Digital = device.io.Digital
 
-const credentials = { ssid: "xxx", password: "xxx" }
-const broker = {
-  server: "mqtt://core.voneicken.com:1883",
-  options: {
-    username: "xs/test",
-    password: "xxx",
-  },
+const mqtt_options = {
+  username: creds.mqtt.username,
+  password: creds.mqtt.password,
 }
 
 let led_wifi
 
 function mqtt_manager() {
-  trace(`MQTT connecting to "${broker.server}"\n`)
-  connectAsync(broker.server, broker.options)
+  trace(`MQTT connecting to "${creds.mqtt.server}"\n`)
+  connectAsync(creds.mqtt.server, mqtt_options)
     .then(client => {
       trace("MQTT connected\n")
       launch_app(client)
@@ -32,14 +29,14 @@ function mqtt_manager() {
 }
 
 function wifi_manager() {
-  trace(`WiFi connecting to "${credentials.ssid}"\n`)
+  trace(`WiFi connecting to "${creds.wifi.ssid}"\n`)
 
   WiFi.mode = 1
 
   if (!led_wifi) led_wifi = new Digital({ pin: device.pin.led_wifi, mode: Digital.Output })
   led_wifi.write(1)
 
-  const monitor = new WiFi(credentials, (msg, code) => {
+  const monitor = new WiFi(creds.wifi, (msg, code) => {
     // try {
     switch (msg) {
       case WiFi.gotIP:
