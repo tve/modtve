@@ -702,6 +702,10 @@ class MQTTClient {
 
 		return true;
 	}
+	// check and send keepalives
+	// The logic here is not quite correct because we tell the server a keepalive timeout and that
+	// means we need to send something at that interval, but the code here looks at #options.last
+	// which is the last time we received something from the server.
 	#keepalive() {
 		const options = this.#options;
 		const interval = options.keepalive.interval;
