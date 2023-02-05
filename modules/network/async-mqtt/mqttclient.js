@@ -710,6 +710,7 @@ class MQTTClient {
 		const options = this.#options;
 		const interval = options.keepalive.interval;
 		const now = Date.now();
+		trace(`keepalive: ${interval - (now - options.last)}ms left\n`)
 		if ((options.last + (interval >> 1)) > now)
 			return;		// received data within the keepalive interval
 
@@ -721,6 +722,7 @@ class MQTTClient {
 				return void this.#onError("time out"); // unsent keepalive ping, exit
 		}
 
+		trace("keepalive: ping\n")
 		this.#queue({
 			operation: MQTTClient.PINGREQ,
 			byteLength: 2,

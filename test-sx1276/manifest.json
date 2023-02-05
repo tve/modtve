@@ -12,7 +12,7 @@
       "compilerOptions": {
         "types": ["$(MODDABLE)/xs/includes/xs", "$(MODDABLE)/typings/global"],
         "paths": {
-          "async-mqtt": ["/home/src/moddable/modules/network/mqtt/async-mqtt"]
+          "async-mqtt": ["/home/src/moddable/modules/network/async-mqtt/async-mqtt"]
         }
       }
     }

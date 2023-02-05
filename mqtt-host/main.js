@@ -21,6 +21,7 @@ function mqtt_manager() {
   connectAsync(creds.mqtt.server, mqtt_options)
     .then(client => {
       trace("MQTT connected\n")
+      globalThis.mqtt = { prefix: creds.mqtt.username }
       launch_app(client)
     })
     .catch(err => {
@@ -76,7 +77,10 @@ function wifi_manager() {
 function launch_app(mqtt) {
   if (Modules.has("check")) {
     // try {
-    Modules.importNow("check")()
+    let check = Modules.importNow("check")
+    check()
+    trace("Check returned\n")
+    Timer.delay(2000)
     if (!Modules.has("app")) throw new Error("Module 'app' not found")
     let app = Modules.importNow("app")
     trace("===== Launching app =====\n")
@@ -92,7 +96,7 @@ function launch_app(mqtt) {
 
 export default function () {
   // try {
-  trace("===== MQTTHost starting =====\n")
+  trace("\n\n===== MQTTHost starting =====\n")
   Timer.repeat(() => trace("Alive...\n"), 10000)
 
   // const led = new device.io.Digital({ pin: device.pin.led, mode: Digital.Output })

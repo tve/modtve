@@ -24,7 +24,7 @@ export default class SX1276fsk {
   #rxRssi = 0 // -RSSI*2 of last packet received
   #rxLna = 0
   #rxAfc = 0 // frequency correction applied by AFC (also called FEI: freq err indication)
-  #rxMargin = 0 // RX margin in dB
+  #rxThres = 0 // RSSI threshold at time of RX
   #bgRssi = 0 // background RSSI
   #bgTimer?: Timer = undefined // timer to update background RSSI
 
@@ -35,7 +35,10 @@ export default class SX1276fsk {
 
   // constructor options:
   // Hardware set-up:
-  // - spi: SPI instance
+  // - spi: SPI instance, WARNING: during bulk-read of the FIFO at a byte boundary MISO
+  //   changes about 90ns after SCK falls, this means the max clock rate is lower than
+  //   spec! With ESP32 consider that MISO is delayed ~25ns when using GPIO matrix. Max
+  //   safe rate is ~3Mhz.
   // - select: { io: device.io.DEVICE, pin: 0, mode: Digital.Output }, // select pin
   // - reset: { io: device.io.DEVICE, pin: 0, mode: Digital.Output }, // reset pin
   // - dio0: { io: device.io.DEVICE, pin: 0, mode: Digital.Input }, // DIO0 interrupt pin
@@ -239,6 +242,7 @@ export default class SX1276fsk {
     this.#spi.write(this.#buffer8) // write fifo addr (0x00)
     this.#spi.read(buf)
     this.#sel.write(1)
+    trace(`read ${this.#rxLen} bytes: ${buf} result: ${buf.buffer === result}\n`)
 
     // enable the radio if wanted based on options
     this.#rxLen = 0
@@ -269,7 +273,7 @@ export default class SX1276fsk {
         this.#rxTimer = undefined
       }
       this.#rxLen = this.#read_reg(0x00) // read FIFO, first byte is packet length
-      //trace("packet ready!\n")
+      trace(`packet ready! 0x${this.#read_reg(REG_IRQFLAGS2).toString(16)}\n`)
       this.#onReadable?.(this.#rxLen, now)
     } catch (e: unknown) {
       trace(`sx1276-fsk onReadable: ${(e as Error).stack}\n`)
@@ -312,12 +316,25 @@ export default class SX1276fsk {
 
   #captureRSSI() {
     this.#rxRssi = this.#read_reg(REG_RSSIVALUE)
-    const thres = this.#read_reg(REG_RSSITHRES)
-    const limit = thres + thresAdj - 2 * demod // unit: 1/2dB
-    this.#rxMargin = this.#rxRssi > limit ? 0 : (limit - this.#rxRssi) / 2
+    this.#rxThres = this.#read_reg(REG_RSSITHRES)
     this.#rxLna = lna_map[(this.#read_reg(REG_LNAVALUE) >> 5) & 0x7]
     const f = (this.#read_reg(REG_AFC) << 8) | this.#read_reg(REG_AFC + 1)
     this.#rxAfc = f * 61
+  }
+
+  get rxRssi() {
+    return -(this.#rxRssi >> 1)
+  }
+  get rxLna() {
+    return this.#rxLna
+  }
+  get rxAfc() {
+    return this.#rxAfc
+  }
+  get rxMargin() {
+    const limit = this.#rxThres + thresAdj - 2 * demod // unit: 1/2dB
+    const margin = this.#rxRssi > limit ? 0 : (limit - this.#rxRssi) >> 1
+    return margin
   }
 
   // ===== low-level stuff
@@ -388,9 +405,9 @@ export default class SX1276fsk {
     }
   }
 
-  rssi() {
-    return -this.#read_reg(0x11) / 2
-  }
+  // rssi() {
+  //   return -this.#read_reg(0x11) / 2
+  // }
 
   restart_rx() {
     this.#write_reg(0x0d, 0x9f | 0x40) // RxConfig reg

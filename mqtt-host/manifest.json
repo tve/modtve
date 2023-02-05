@@ -1,8 +1,13 @@
 {
-  "include": ["$(MODDABLE)/examples/manifest_base.json", "$(MODDABLE)/examples/manifest_net.json"],
+  "include": [
+    "$(MODDABLE)/examples/manifest_base.json",
+    "$(MODDABLE)/examples/manifest_net.json",
+    "$(MODULES)/data/base64/manifest.json"
+  ],
   "modules": {
     "*": [
       "./config",
+      "./creds",
       "./main",
       "$(MODULES)/base/modules/*",
       "$(MODULES)/network/sntp/*",
@@ -11,10 +16,10 @@
     "dns": "$(MODULES)/network/dns/dns",
     "dns/parser": "$(MODULES)/network/dns/dnsparser",
     "dns/serializer": "$(MODULES)/network/dns/dnsserializer",
-    "mqtt": "../modules/network/mqtt/mqtt",
-    "async-mqtt": "../modules/network/mqtt/async-mqtt",
+    "mqtt": "../modules/network/async-mqtt/mqtt",
+    "async-mqtt": "../modules/network/async-mqtt/async-mqtt",
     "embedded:network/dns/resolver/udp": "$(MODDABLE)/examples/io/udp/dns/dns",
-    "embedded:network/mqtt/client": "../modules/network/mqtt/mqttclient"
+    "embedded:network/mqtt/client": "../modules/network/async-mqtt/mqttclient"
   },
   "platforms": {
     "esp": {
@@ -34,6 +39,7 @@
   "preload": [
     "modules",
     "config",
+    "creds",
     "embedded:network/dns/resolver",
     "sntp",
     "dns",

@@ -6,6 +6,9 @@
 // From the radio's perspective, a packet has 5 0xaa preamble bytes, 2 sync bytes, a length byte,
 // the payload of up to 64 bytes, and a 2-byte CRC.
 
+import Base64 from "base64"
+import { decodeVarint, decodeVarints } from "./varint"
+
 // genSyncBytes generates the sync bytes ("words") as well as the parity bits for the radio.
 // The radio programming uses a little trick, which is to reduce the number of required preamble
 // bytes at the RX end by one and to place the preamble pattern into the first sync byte.
@@ -28,6 +31,7 @@ export function genSyncBytes(group: number) {
 
 // JlPacket contains a partially decoded JeeLabs v1 or v2 packet
 interface JlPacket {
+  vers: 1 | 2 // packet version
   // bool        isAck:1, fromGW:1, ackReq:1, special:1, trailer:1, vers:2;
   isAck: boolean // 1 if this is an ACK packet
   fromGW: boolean // 1 if this is a packet from the gateway
@@ -39,9 +43,9 @@ interface JlPacket {
   rssi: number // in dBm
   snr: number // in dB
   at: number // arrival timestamp (Date.now())
-  node: number // 32-bit node id
-  payload: Uint8Array // raw payload bytes
-  data: Int32Array | undefined // decoded varint payload data
+  node: string // 32-bit node id
+  payload: string // base64 encoded payload bytes corresponding to data
+  data: Int32Array | number[] | undefined // decoded varint payload data
 }
 
 export function decode(buf: Uint8Array): Partial<JlPacket> | null {
@@ -87,14 +91,26 @@ export function decodeV1(buf: Uint8Array): Partial<JlPacket> | null {
   const hasInfo = (buf[2] & 0x80) != 0
   if (hasInfo && buf.length < 5) return null
   const fromGW = (buf[0] & 0x3f) != 0
+  let pl = buf.subarray(3, hasInfo ? buf.length - 2 : buf.length)
+  var node: number | undefined = undefined
+  if (!fromGW && pl.length > 1) {
+    // decode and remove node id from payload
+    var [node, len] = decodeVarint(pl)
+    if (len > 5) return null
+    pl = pl.subarray(len)
+  }
+  const data = decodeVarints(pl)
   return {
+    vers: 1,
     isAck: fromGW,
     fromGW,
     wantAck: (buf[1] & 0x80) != 0,
     type: buf[2] & 0x7f,
     remoteMargin: hasInfo ? buf[buf.length - 2] & 0x3f : undefined,
     remoteFEI: hasInfo ? (buf[buf.length - 1] << 24) >> 17 : undefined,
-    payload: buf.slice(3, hasInfo ? buf.length - 2 : buf.length),
+    node: node ? (node >>> 0).toString(16) : undefined,
+    payload: Base64.encode(pl),
+    data,
   }
 }
 
@@ -129,14 +145,20 @@ export function decodeV2(buf: Uint8Array): Partial<JlPacket> | null {
   if (buf.length < 6) return null
   const hasInfo = (buf[5] & 0x80) != 0
   if (hasInfo && buf.length < 8) return null
+  const pl = buf.slice(6, hasInfo ? buf.length - 2 : buf.length)
+  const data = decodeVarints(pl)
+  let node: number | string = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4]
+  node = (node >>> 0).toString(16)
   return {
+    vers: 2,
     isAck: (buf[0] & 0x28) == 0x20,
     fromGW: (buf[0] & 0x10) != 0,
     wantAck: (buf[0] & 0x28) == 0x08,
     type: buf[5] & 0x7f,
     remoteMargin: hasInfo ? buf[buf.length - 2] & 0x3f : undefined,
     remoteFEI: hasInfo ? (buf[buf.length - 1] << 24) >> 17 : undefined,
-    node: (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4],
-    payload: buf.slice(6, hasInfo ? buf.length - 2 : buf.length),
+    node,
+    payload: Base64.encode(pl),
+    data,
   }
 }

@@ -40,25 +40,25 @@ export function encodeVarints(ints: number[]) : Uint8Array {
 */
 
 // decodeVarint decodes a single varint from a buffer.
-// Returns a tuple with the values and the number of bytes consumed from the buffer or 0
+// Returns a tuple with the value and the number of bytes consumed from the buffer or 0
 // if no varint was decoded.
 // Reference: http://jeelabs.org/article/1620c/
-export function decodeVarint(buf: Uint8Array): [number | null, number] {
-  let val = 0 // producing int32_t in the end but shifts are easier with uint32_t
+export function decodeVarint(buf: Uint8Array): [number | undefined, number] {
+  let val = 0
   for (let i = 0; i < buf.length; i++) {
     val = (val << 7) | (buf[i] & 0x7f)
     if ((buf[i] & 0x80) != 0) {
-      // last byte flag set, output an int
-      if ((val & 1) == 0) val = val >> 1 // positive value, eat sign bit
-      else val = ~(val >> 1) // negative value, eat sign bit and negate
+      // last byte flag set, return int
+      if ((val & 1) == 0) val = val >>> 1 // positive value, eat sign bit
+      else val = ~(val >>> 1) // negative value, eat sign bit and negate
       return [val, i + 1]
     }
   }
   // did not get to the end of a value
-  return [null, 0]
+  return [undefined, 0]
 }
 
-function countVartints(buf: Uint8Array): number {
+function countVarints(buf: Uint8Array): number {
   let count = 0
   for (let i = 0; i < buf.length; i++) {
     if ((buf[i] & 0x80) != 0) count++
@@ -69,12 +69,12 @@ function countVartints(buf: Uint8Array): number {
 // decodeVarints decodes buffer of varint bytes into a Uint32Array.
 // Reference: http://jeelabs.org/article/1620c/
 export function decodeVarints(buf: Uint8Array): Int32Array {
-  const count = countVartints(buf)
+  const count = countVarints(buf)
   const vals = new Int32Array(count)
   let v_ix = 0 // index into vals
   while (buf.length > 0) {
     const [val, len] = decodeVarint(buf)
-    if (val == null) return vals
+    if (val == undefined || len == 0) return vals
     vals[v_ix++] = val
     buf = buf.subarray(len)
   }

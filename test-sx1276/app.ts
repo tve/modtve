@@ -28,11 +28,12 @@ const rf_group = 6
 const rf_freq = 912500000
 const { sync, parity } = genSyncBytes(rf_group)
 
-function traceHexBuffer(buf: Uint8Array) {
+function toHex2(buf: Uint8Array) {
+  let s = ""
   for (let i = 0; i < buf.length; i++) {
-    trace(" ")
-    trace(buf[i].toString(16).padStart(2, "0"))
+    s += " " + buf[i].toString(16).padStart(2, "0")
   }
+  return s.substring(1)
 }
 
 function blinkLed(digPin: Digital, value: 0 | 1, delay: number) {
@@ -43,9 +44,11 @@ function blinkLed(digPin: Digital, value: 0 | 1, delay: number) {
 }
 
 let mqtt: AsyncClient
+let prefix = ""
 
 export default function (_mqtt: AsyncClient) {
   mqtt = _mqtt
+  prefix = (globalThis as any).mqtt.prefix
   trace("Initializing Radio\n")
   radio = new SX1276fsk({
     spi: (device.SPI as any).radio,
@@ -83,9 +86,12 @@ export default function (_mqtt: AsyncClient) {
 }
 
 function rxPacket(length: number, now: number) {
-  const n = radio.read(buffer)
-  if (!n || n < 5) return
-  const buf = length > 40 ? buffer.subarray(0, 40) : buffer.subarray(0, length)
+  // const n = radio.read(buffer)
+  // if (!n || n < 5) return
+  // const buf = length > 40 ? buffer.subarray(0, 40) : buffer.subarray(0, length)
+  const r = radio.read()
+  if (r === undefined) return
+  const buf = new Uint8Array(r)
 
   // ensure packet has correct group parity
   const pktParity = buf[0] & 0xc0
@@ -94,27 +100,35 @@ function rxPacket(length: number, now: number) {
     return
   }
 
-  trace(`Received ${n} bytes:`)
-  traceHexBuffer(buf)
-  trace("\n")
   blinkLed(led, 1, 200)
+  trace(`Received ${buf.length} bytes:`)
+  trace(toHex2(buf))
+  trace("\n")
 
   // decode the packet
   const jlpkt = decode(buf)
   if (!jlpkt) return
-  jlpkt.data = decodeVarints(jlpkt.payload!)
 
-  const node = jlpkt.node || buf[0] & 0x3f
-  const retId = jlpkt.node || buf[1] & 0x3f // return RF id
+  jlpkt.rssi = radio.rxRssi
+  jlpkt.snr = radio.rxMargin
+  jlpkt.fei = radio.rxAfc
+
+  // const retId = jlpkt.node || buf[1] & 0x3f // return RF id
 
   const dir = jlpkt.fromGW ? "TX" : "RX"
   const ack = jlpkt.wantAck ? "A" : "-"
   const info = jlpkt.remoteMargin !== undefined ? "I" : "-"
-  trace(`<info>PKT ${dir}${node.toString(16)} ${jlpkt.data.length}b T${jlpkt.type} `)
-  trace(`${ack}${info} ${jlpkt.remoteMargin}dB ${jlpkt.remoteFEI}Hz\n`)
+  trace(`<info>PKT ${dir} ${jlpkt.node}: ${jlpkt.data?.length} vals T${jlpkt.type} `)
+  trace(`${ack}${info} ${jlpkt.rssi}dBm ${jlpkt.snr}dB ${jlpkt.fei}Hz `)
+  trace(`rem: ${jlpkt.remoteMargin}dB ${jlpkt.remoteFEI}Hz\n`)
+  trace(`    ${jlpkt.data}\n`)
+  if (jlpkt.data instanceof Int32Array) {
+    jlpkt.data = Array.from(jlpkt.data as Int32Array)
+  }
+  ;(jlpkt as any).raw = toHex2(buf)
 
   if (mqtt) {
-    mqtt.publish(`xs/test/jlpkt`, JSON.stringify(jlpkt)).then(() => {
+    mqtt.publish(`${prefix}/jlpkt`, JSON.stringify(jlpkt), { qos: 1 }).then(() => {
       trace("Published!\n")
     })
   }
