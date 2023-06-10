@@ -10,7 +10,7 @@ Stuff used:
 - Xio Tech sensor fusion (https://github.com/xioTechnologies/Fusion)
 - Poco outline drawing
 
-[image of screen and IMU](./Screen-20230610-132807.png)
+![image of screen and IMU](./Screen-20230610-132807.png)
 
 Code architecture:
 
