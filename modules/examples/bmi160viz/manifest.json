@@ -20,12 +20,12 @@
   "creation": {
     "static": 65000,
     "chunk": {
-      "initial": 32000,
+      "initial": 16000,
       "incremental": 1024
     },
     "heap": {
-      "initial": 1026,
-      "incremental": 64
+      "initial": 1536,
+      "incremental": 128
     },
     "stack": 256,
     "keys": {
