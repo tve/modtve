@@ -1,5 +1,7 @@
 moddable
 *-orig
 creds.js
-repro-host/
-repro-app/
+repro-*/
+modules/lib/fusion/
+*.tar.gz
+.vscode/

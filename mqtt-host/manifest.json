@@ -55,6 +55,7 @@
   },
   "creation": {
     "static": 65536,
+    "stack": 384,
     "keys": {
       "available": 256
     }

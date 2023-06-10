@@ -1,19 +1,37 @@
 {
   "compilerOptions": {
+    "listFiles": true,
+    "traceResolution": true,
     "forceConsistentCasingInFileNames": true,
-    "lib": ["es2020"],
-    "module": "es2020",
-    "target": "ES2020",
+    "lib": ["es2022"],
+    "module": "es2022",
+    "target": "es2022",
     "baseUrl": "./",
     "sourceMap": true,
     "strict": true,
     "noImplicitAny": true,
-    "typeRoots": ["./moddable/typings"],
+    "types": [
+      "/home/sw/moddable/moddable/typings/global",
+      "/home/sw/moddable/moddable/xs/includes/xs"
+    ],
     "paths": {
-      "sx1276-fsk": ["./modules/drivers/sx1276-fsk/sx1276-fsk"],
-      "mqtt": ["./modules/network/async-mqtt/mqtt"],
-      "async-mqtt": ["./modules/network/async-mqtt/async-mqtt"]
+      "sx1276-fsk": ["modules/drivers/sx1276-fsk/sx1276-fsk"],
+      "mqtt": ["modules/network/async-mqtt/mqtt"],
+      "async-mqtt": ["modules/network/async-mqtt/async-mqtt"],
+      "embedded:driver/button": ["modules/drivers/debounced-button/debounced-button"],
+      "embedded:driver/owtemp": ["modules/drivers/owtemp/owtemp"],
+      "embedded:sensor/Accelerometer-Gyroscope/BMI160": ["modules/drivers/sensors/bmi160/bmi160"],
+      "embedded:lib/simple-pid": ["modules/lib/simple-pid/simple-pid"],
+      "embedded:lib/IMU/fusion": ["modules/lib/fusion/fusion"],
+      "embedded:lib/meminfo": ["modules/lib/meminfo/meminfo"],
+      "onewire": ["/home/sw/moddable/moddable/modules/drivers/onewire/onewire"],
+      "DS18X20": ["/home/sw/moddable/moddable/modules/drivers/onewire/DS18X20"],
+      "*": ["/home/sw/moddable/moddable/typings/*"],
+      "embedded:provider/*": ["/home/sw/moddable/moddable/typings/embedded_provider/*"],
+      "embedded:io/*": ["/home/sw/moddable/moddable/typings/embedded_io/*"],
+      "embedded:io/socket/*": ["/home/sw/moddable/moddable/typings/embedded_io/socket/*"]
     }
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["repro-tsimport/**/*"]
 }
