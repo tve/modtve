@@ -1,4 +1,3 @@
-import meminfo from "embedded:lib/meminfo"
 import Timer from "timer"
 import Time from "time"
 //import { startIMU, stopIMU } from "./imu"
@@ -165,7 +164,6 @@ function drawRPY(poco: PocoPrototype, eu: Euler, fps: number, font: any, bg: num
 }
 
 export default function main() {
-  trace(JSON.stringify(meminfo()) + "\n")
   const font_big = parseBMF(new Resource("OpenSansCondensed-Bold-30.bf4"))
   const font_sml = parseBMF(new Resource("OpenSans-Regular-24.bf4"))
   const font_med = parseBMF(new Resource("OpenSans-Semibold-28.bf4"))
