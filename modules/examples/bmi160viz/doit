@@ -1,0 +1,27 @@
+#! /bin/sh -e
+export IDF_PATH=/home/sw/moddable/esp-idf
+export MODTVE=/home/src/moddable
+export DEBUGGER_SPEED=115200
+export UPLOAD_SPEED=460800
+export FONTBM=/usr/bin/fontbm
+
+BOARD=m2
+case $BOARD in
+m2)
+    export UPLOAD_PORT=/dev/ttyUSB0
+    mcconfig -d -m -p esp32/moddable_two_io -r 0 -t build
+    (
+        cd /home/sw/moddable/moddable/build/tmp/esp32/moddable_two_io/debug/bmi160viz/xsProj-esp32/build
+        esptool.py --chip esp32 -p $UPLOAD_PORT -b $UPLOAD_SPEED --before=default_reset --after=hard_reset write_flash --flash_mode dio --flash_freq 80m --flash_size 4MB 0x1000 bootloader/bootloader.bin 0x10000 xs_esp32.bin 0x8000 partition_table/partition-table.bin
+    )
+    mcconfig -v -d -m -p esp32/moddable_two_io -t xsbug
+    # npx nodemon -V -w . -w $MODTVE/modules -e 'js ts json c' \
+    #     -x 'mcconfig -d -m -p esp32/moddable_two_io || exit 1'
+    ;;
+c3)
+    # configured for Lolin C3 pico board
+    export UPLOAD_PORT=/dev/ttyACM0
+    npx nodemon -V -w . -w $MODTVE/modules -e 'js ts json c' \
+        -x 'mcconfig -d -m -p esp32/lolin_c3_pico || exit 1'
+    ;;
+esac

@@ -1,0 +1,6 @@
+{
+  "modules": {
+    "embedded:sensor/Accelerometer-Gyroscope/BMI160": "./bmi160"
+  },
+  "preload": ["embedded:sensor/Accelerometer-Gyroscope/BMI160"]
+}
