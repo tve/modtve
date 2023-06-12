@@ -1,13 +1,12 @@
 import Timer from "timer"
 import Time from "time"
-//import { startIMU, stopIMU } from "./imu"
+import { startIMU, sampleIMU, stopIMU } from "./imu"
 import { Quaternion, Euler } from "embedded:lib/IMU/fusion"
 import { Matrix4, Vec4 } from "./hack3d"
 import Poco, { PocoPrototype } from "commodetto/Poco"
 import { Outline } from "commodetto/outline"
 import parseBMF from "commodetto/parseBMF"
 import Resource from "Resource"
-import Worker from "worker"
 
 interface Model {
   vertices: Vec4[]
@@ -94,7 +93,9 @@ function projectVertices(vertices: Vec4[], mvp: Matrix4, sx: number, sy: number)
 function sortFaces(model: Model) {
   let { vertices, faces, colors } = model
   const depths = faces.map((face, ix) => {
-    const z = face.reduce((sum, v) => sum + vertices[v].z, 0) / face.length
+    let z = 0
+    for (const v of face) z += vertices[v].z
+    z /= face.length
     return { face, z, color: colors[ix] }
   })
   depths.sort((a, b) => a.z - b.z)
@@ -253,39 +254,14 @@ export default function main() {
     drawRPY(poco, eu, fps, font_sml, bg, ylw)
   }
 
-  //startIMU(10, updateDisplay)
-  const workerOpts = {
-    allocation: 16 * 1024,
-    stackCount: 256,
-    slotCount: 64,
-    keyCount: 7,
+  startIMU()
+  let run = true
+  function loop() {
+    const q = sampleIMU()
+    if (q) updateDisplay(q)
+    if (run) Timer.set(loop, 0)
   }
-  trace(`Launching IMU Worker: ${JSON.stringify(workerOpts)}\n`)
-  const imu = new Worker("imuworker", workerOpts)
-  if (!imu) throw new Error("Failed to create IMU Worker")
-
-  let updateTimer: Timer | null = null // tells us whether an updateDisplay is already running
-  let updateQ: Quaternion | null = null // the last message "queued" while updateDisplay is running
-  imu.onmessage = function (message: any) {
-    //trace(`IMU: ${JSON.stringify(message)}\n`)
-    if (updateTimer == null) {
-      // updateDisplay not running, we get to run it!
-      updateQ = message
-      updateTimer = Timer.set(() => {
-        while (updateQ) {
-          // run updateDisplay until there is not data
-          const q = updateQ
-          updateQ = null
-          updateDisplay(q)
-        }
-        updateTimer = null
-      }, 1)
-    } else {
-      // updateDisplay is already running, just queue the message
-      updateQ = message
-    }
-  }
-  imu.postMessage({ cmd: "start", freq: 16, device })
+  Timer.set(loop, 0)
 
   // Timer.set(() => {
   //   if (imu) imu.postMessage({ cmd: "stop" })

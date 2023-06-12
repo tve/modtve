@@ -58,12 +58,20 @@ Object.freeze(ACC_SCALER)
 // scale from raw 16-bit signed data to deg/s
 const GYR_SCALER = Object.freeze([0.061, 0.0305, 0.0153, 0.0076, 0.0038])
 
+// FIFO constants
+const FIFO = {
+  PACKET_LENGTH: 12, // accel + gyro
+  MAX_PACKETS: Math.floor(1024 / 12) - 2, // 1024 byte fifo, but BMI keeps 2 frames free
+}
+Object.freeze(FIFO)
+
 export interface Options {
   sensor: {
     io: any
     address?: number
   }
   onError?: (error: string) => void
+  fifo?: boolean // whether to enable the FIFO for batch reading
 }
 
 export interface Accelerometer {
@@ -82,10 +90,14 @@ export interface Sample {
   gyroscope: Gyroscope
 }
 
+export type BatchCallback = (ticks: number, g: Gyroscope, a: Accelerometer) => void
+
 export default class BMI160 {
   #io
-  #regsRaw = new ArrayBuffer(12)
-  #regsView
+  #regsRaw = new ArrayBuffer(12) // accel
+  #regsView: DataView
+  #fifo_next?: number // ticks for expected next fifo sample
+  #fifo_intv = 10 // fifo interval in ms (fixed for now)
   #accelRange = AccelRange.RANGE_2_G
   #gyroRange = GyroRange.RANGE_2000
   #unit_fct? = GtoMS2
@@ -118,7 +130,7 @@ export default class BMI160 {
     // device reset
     const t0 = Time.ticks
     this.runCommand(0xb6) // soft-reset
-    trace("BMI160 reset took " + (Time.ticks - t0) + " ms\n")
+    trace("BMI160 reset cmd " + (Time.ticks - t0) + " ms\n")
     //Timer.delay(10)
 
     // power up accelerometer and gyroscope
@@ -132,8 +144,11 @@ export default class BMI160 {
     while ((io.readUint8(REGISTERS.PMU_STATUS) & 0x3f) != 0x14) {
       Timer.delay(0)
     }
+    trace("BMI160 ready after " + (Time.ticks - t0) + " ms\n")
 
     trace(`BMI.off6: ${io.readUint8(0x77).toString(16)}\n`)
+
+    this.configure(options)
 
     // const {alert, onAlert} = options;
     // if (alert && onAlert) {
@@ -151,25 +166,30 @@ export default class BMI160 {
     // }
   }
 
-  // configure(options) {
-  // 	const io = this.#io;
+  configure(options: Options) {
+    const io = this.#io
 
-  // 	if (undefined !== options.range) {
-  // 		this.#range = options.range | 0b11;
-  // 		io.writeUint8(REGISTERS.ACCEL_CONFIG, this.#range << 3);
-  // 	}
+    if (options.fifo != undefined) {
+      io.writeUint8(REGISTERS.FIFO_CONFIG + 1, options.fifo ? 0xc0 : 0)
+      this.runCommand(0xb0) // fifo-flush
+    }
 
-  // 	if (undefined !== options.gyroRange) {
-  // 		this.#gyroRange = options.gyroRange | 0b11;
-  // 		io.writeUint8(REGISTERS.GYRO_CONFIG, this.#gyroRange << 3);
-  // 	}
+    // 	if (undefined !== options.range) {
+    // 		this.#range = options.range | 0b11;
+    // 		io.writeUint8(REGISTERS.ACCEL_CONFIG, this.#range << 3);
+    // 	}
 
-  // 	if (undefined !== options.sampleRateDivider)
-  // 		io.writeUint8(REGISTERS.SAMPLERATE_DIV, options.sampleRateDivider & 0xff);
+    // 	if (undefined !== options.gyroRange) {
+    // 		this.#gyroRange = options.gyroRange | 0b11;
+    // 		io.writeUint8(REGISTERS.GYRO_CONFIG, this.#gyroRange << 3);
+    // 	}
 
-  // 	if (undefined !== options.lowPassFilter)
-  // 		io.writeUint8(REGISTERS.DLPF_CONFIG, options.lowPassFilter & 0b111);
-  // }
+    // 	if (undefined !== options.sampleRateDivider)
+    // 		io.writeUint8(REGISTERS.SAMPLERATE_DIV, options.sampleRateDivider & 0xff);
+
+    // 	if (undefined !== options.lowPassFilter)
+    // 		io.writeUint8(REGISTERS.DLPF_CONFIG, options.lowPassFilter & 0b111);
+  }
 
   close() {
     // this.#monitor?.close();
@@ -229,14 +249,48 @@ export default class BMI160 {
     io.writeBuffer(REGISTERS.OFF0, zero)
   }
 
-  samples(): Sample[] {
+  batch(callback: BatchCallback): void {
     const io = this.#io
+    let num = io.readUint16(REGISTERS.FIFO_LENGTH)
+    let now = Time.ticks
+    if (num > 900) trace(`BMI160 FIFO: ${num} bytes!\n`)
+    const snum = Math.idiv(num, FIFO.PACKET_LENGTH)
+    if (snum == 0) return
 
-    const num = io.readUint8(REGISTERS.FIFO_LENGTH) | (io.readUint8(REGISTERS.FIFO_LENGTH + 1) << 8)
+    // figure timestamp of first sample
+    const span = (snum - 1) * this.#fifo_intv
+    let ts = now - span // tentative assuming we need to reset time
+    // see whether we can continue from previous batch instead
+    if (snum < FIFO.MAX_PACKETS && this.#fifo_next != undefined) {
+      // FIFO didn't fill, continue timestamps from previous batch
+      const tsl = this.#fifo_next + span // timestamp for last sample
+      // check for BMI clock drift WRT ours
+      if (tsl > now - this.#fifo_intv && tsl < now + this.#fifo_intv) ts = this.#fifo_next
+    }
 
-    const st = io.readUint8(REGISTERS.SENSORTIME)
-    const now = Time.ticks
-    return []
+    // read samples from fifo, we do this one sample at a time to keep memory usage low
+    // reading the full fifo at once would bring less than 2x improvement on the raw i2c
+    // read and even less when accounting for converting & processing the data
+    for (let i = 0; i < snum; ++i) {
+      const got = io.readBuffer(REGISTERS.FIFO_DATA, this.#regsRaw)
+      if (got != FIFO.PACKET_LENGTH) throw new Error("BMI160: short read")
+      const g = this.gyrFromRaw()
+      const a = this.accelFromRaw()
+      callback(ts, g, a)
+      ts += this.#fifo_intv
+    }
+    this.#fifo_next = ts
+  }
+
+  hexDump(buf: Uint8Array) {
+    let s = "@00:"
+    for (let i = 0; i < buf.length; ++i) {
+      if (i % 48 == 0 && i > 0) s += "\n@" + i.toString(16) + ": "
+      else if (i % 12 == 0) s += " "
+      const v = buf[i]
+      s += v < 16 ? "0" + v.toString(16) : v.toString(16)
+    }
+    trace(s + "\n")
   }
 
   sample(): Sample | undefined {
@@ -254,41 +308,30 @@ export default class BMI160 {
     }
 
     io.readBuffer(REGISTERS.DATA, this.#regsRaw)
+    const ts = Time.ticks
+    return { ticks: ts, gyroscope: this.gyrFromRaw(), accelerometer: this.accelFromRaw() }
+  }
 
-    // trace(
-    //   `BYTES: ${new Array(12)
-    //     .fill(0)
-    //     .map((_, i) => this.#regsView.getUint8(i).toString(16))
-    //     .join(" ")}\n`
-    // )
-    // trace(
-    //   `INT16: ${new Array(6)
-    //     .fill(0)
-    //     .map((_, i) => this.#regsView.getInt16(2 * i, true).toString(16))
-    //     .join(" ")}\n`
-    // )
-
-    const ret = {
-      ticks: Time.ticks,
-      gyroscope: {
-        x: this.#regsView.getInt16(0, true) * GYR_SCALER[this.#gyroRange],
-        y: this.#regsView.getInt16(2, true) * GYR_SCALER[this.#gyroRange],
-        z: this.#regsView.getInt16(4, true) * GYR_SCALER[this.#gyroRange],
-      },
-      accelerometer: {
-        x: this.#regsView.getInt16(6, true) * ACC_SCALER[this.#accelRange],
-        y: this.#regsView.getInt16(8, true) * ACC_SCALER[this.#accelRange],
-        z: this.#regsView.getInt16(10, true) * ACC_SCALER[this.#accelRange],
-      },
+  gyrFromRaw(): Gyroscope {
+    return {
+      x: this.#regsView.getInt16(0, true) * GYR_SCALER[this.#gyroRange], // true->littleEndian
+      y: this.#regsView.getInt16(2, true) * GYR_SCALER[this.#gyroRange],
+      z: this.#regsView.getInt16(4, true) * GYR_SCALER[this.#gyroRange],
     }
+  }
 
+  accelFromRaw(): Accelerometer {
+    const a = {
+      x: this.#regsView.getInt16(6, true) * ACC_SCALER[this.#accelRange],
+      y: this.#regsView.getInt16(8, true) * ACC_SCALER[this.#accelRange],
+      z: this.#regsView.getInt16(10, true) * ACC_SCALER[this.#accelRange],
+    }
     if (this.#unit_fct !== undefined) {
-      ret.accelerometer.x = ret.accelerometer.x * this.#unit_fct
-      ret.accelerometer.y = ret.accelerometer.y * this.#unit_fct
-      ret.accelerometer.z = ret.accelerometer.z * this.#unit_fct
+      a.x = a.x * this.#unit_fct
+      a.y = a.y * this.#unit_fct
+      a.z = a.z * this.#unit_fct
     }
-
-    return ret
+    return a
   }
 
   // read 16-bit signed integer register
@@ -299,8 +342,8 @@ export default class BMI160 {
   // write a command to the CMD register and wait for the sommand to complete
   runCommand(cmd: number) {
     this.#io.writeUint8(REGISTERS.CMD, cmd)
-    trace("BMI160 command " + cmd.toString(16) + "\n")
-    if (cmd == 0xb6) Timer.delay(100) // reset command
+    //trace("BMI160 command " + cmd.toString(16) + "\n")
+    if (cmd == 0xb6) Timer.delay(10) // reset command
     const t0 = Time.ticks
     // 100ms timeout for command to complete (reset may take 80)
     while (Time.ticks - t0 < 100) {

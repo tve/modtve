@@ -1,3 +1,5 @@
+// NOT USED ANYMORE
+
 import { startIMU, stopIMU } from "./imu"
 
 self.onmessage = function (msg: any) {
