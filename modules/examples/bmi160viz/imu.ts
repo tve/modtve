@@ -1,7 +1,7 @@
 import Timer from "timer"
 import Time from "time"
 import BMI160 from "embedded:sensor/Accelerometer-Gyroscope/BMI160"
-import { AHRS, Quaternion } from "embedded:lib/IMU/fusion"
+import { AHRS, GyroOffset, Quaternion } from "embedded:lib/IMU/fusion"
 
 const UPRIGHT = false // true: upright, false: upside-down
 const ZERO = Object.freeze([5, 1, 255, 252, 1, 254, 243]) // zero offsets for IMU
@@ -9,6 +9,7 @@ const ZERO = Object.freeze([5, 1, 255, 252, 1, 254, 243]) // zero offsets for IM
 let sensor: BMI160 | null // BMI160 sensor
 let sample_at = 0 // to calculate delta time
 let ahrs: AHRS // attitude and heading reference system
+let gyroOff: GyroOffset
 
 export function startIMU() {
   sensor = new BMI160({
@@ -30,6 +31,7 @@ export function startIMU() {
   }
 
   ahrs = new AHRS()
+  gyroOff = new GyroOffset(100)
   sample_at = Time.ticks
 }
 
@@ -47,6 +49,8 @@ export function sampleIMU(): Quaternion | null {
       accel.y = -accel.y
       accel.z = -accel.z
     }
+    // update the gyroscope drift filtering
+    gyr = gyroOff.update(gyr)
     ahrs.updateNoMagnetometer(gyr, accel, dt)
   })
   // validate
