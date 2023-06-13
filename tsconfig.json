@@ -21,6 +21,7 @@
       "embedded:driver/button": ["modules/drivers/debounced-button/debounced-button"],
       "embedded:driver/owtemp": ["modules/drivers/owtemp/owtemp"],
       "embedded:sensor/Accelerometer-Gyroscope/BMI160": ["modules/drivers/sensors/bmi160/bmi160"],
+      "embedded:sensor/Power-Management/INA233": ["modules/drivers/sensors/ina233/ina233"],
       "embedded:lib/simple-pid": ["modules/lib/simple-pid/simple-pid"],
       "embedded:lib/IMU/fusion": ["modules/lib/fusion/fusion"],
       "embedded:lib/meminfo": ["modules/lib/meminfo/meminfo"],

@@ -1,5 +1,5 @@
 // Bosch BMI160 accelerometer/gyroscope driver
-// Copyright © 2021-2023 by Thorsten von Eicken.
+// Copyright © 2023 by Thorsten von Eicken.
 
 import Timer from "timer"
 import Time from "time"
