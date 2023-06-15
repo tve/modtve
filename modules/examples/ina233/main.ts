@@ -14,12 +14,13 @@ const sensor = new INA233({
 
   shuntOhms: 0.003,
   maxCurrent: 30, // max current in amps (default: 10A)
-  averaging: 16, // number of samples to average (1,4,16,64,...1024), default:1
+  averaging: 64, // number of samples to average (1,4,16,64,...1024), default:1
   vTime: ADC.TIME_588, // voltage ADC conversion time (ADC.TIME_*), default:1.1ms
   aTime: ADC.TIME_588, // current ADC conversion time (ADC.TIME_*), default:1.1ms
-  polarity: POLARITY.POSITIVE, // polarity (POLARITY.*), default:POLARITY.BOTH
-  clearEnergy: false, // clear energy accumulator on reading sample, default:false
+  polarity: POLARITY.BOTH, // polarity (POLARITY.*), default:POLARITY.BOTH
 })
+
+trace(`INA233: sampleIval=${sensor.sampleInterval}us maxIval=${sensor.maxInterval(600)}ms\n`)
 
 const ticker = Timer.repeat(() => {
   const sample = sensor.sample()

@@ -6,7 +6,6 @@
     "../../drivers/sensors/ina233/manifest.json"
   ],
   "modules": {
-    "*": "./*.ts"
-  },
-  "preload": []
+    "*": ["./*.ts"]
+  }
 }

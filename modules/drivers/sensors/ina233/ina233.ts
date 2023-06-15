@@ -21,19 +21,31 @@ const COMMANDS = {
 Object.freeze(COMMANDS)
 
 export const ADC = {
-  TIME_140: 0x00, // 140us
-  TIME_204: 0x01, // 204us
-  TIME_332: 0x02, // 332us
-  TIME_588: 0x03, // 588us
-  TIME_1100: 0x04, // 1.1ms
-  TIME_2116: 0x05, // 2.116ms
-  TIME_4156: 0x06, // 4.156ms
-  TIME_8244: 0x07, // 8.244ms
+  TIME_140: 0, // 140us
+  TIME_204: 1, // 204us
+  TIME_332: 2, // 332us
+  TIME_588: 3, // 588us
+  TIME_1100: 4, // 1.1ms
+  TIME_2116: 5, // 2.116ms
+  TIME_4156: 6, // 4.156ms
+  TIME_8244: 7, // 8.244ms
+  AVG_1: 0, // 1 sample
+  AVG_4: 1, // 4 samples
+  AVG_16: 2, // 16 samples
+  AVG_64: 3, // 64 samples
+  AVG_128: 4, // 128 samples
+  AVG_256: 5, // 256 samples
+  AVG_512: 6, // 512 samples
+  AVG_1024: 7, // 1024 samples
 }
 Object.freeze(ADC)
+const ADC_TIME = [140, 204, 332, 588, 1100, 2116, 4156, 8244]
+Object.freeze(ADC_TIME)
+const ADC_AVG = [1, 4, 16, 64, 128, 256, 512, 1024]
+Object.freeze(ADC_AVG)
 
 export const POLARITY = {
-  BOTH: 0x00, // accumulate both positive and negative power (default)
+  BOTH: 0x00, // accumulate absolute value of power (default)
   POSITIVE: 0x01, // accumulate only positive power (positive current)
   NEGATIVE: 0x02, // accumulate only negative power (negative current)
 }
@@ -54,26 +66,26 @@ export interface Options {
   aTime?: number // current ADC conversion time (ADC.TIME_*), default:1.1ms
   // polarity and clearEnergy must be specified together, or neither
   polarity?: number // polarity (POLARITY.*), default:POLARITY.BOTH
-  clearEnergy?: boolean // clear energy accumulator on reading sample, default:false
 }
 
 export interface Sample {
   v: number // voltage in volts
-  i: number // current in amps
-  p: number // power in watts
-  e: number // energy in watt-hours, since previous sample
-  p_avg: number // average power in watts, since previous sample
+  a: number // current in amps
+  w: number // power in watts
+  j: number // energy in watt-hours, since previous sample
+  w_avg: number // average power in watts, since previous sample
 }
 
 export default class INA233 {
   #io
-  // #regsRaw = new ArrayBuffer(12) // accel
-  // #regsView: DataView
+  #einRaw = new Uint8Array(7)
   #onError?: (error: string) => void
 
+  #accum_ival = 1
   #iin_fct = 1
   #pin_fct = 25
-  #e_at = 0 // ticks when energy accumulator was last cleared
+  #e_at = 0 // ticks when energy accumulator was last read
+  #positive = true // sign of current accumulator
 
   constructor(options: Options) {
     const io = (this.#io = new options.sensor.io({
@@ -84,8 +96,6 @@ export default class INA233 {
 
     this.#onError = options.onError
 
-    // this.#regsView = new DataView(this.#regsRaw) // for 16-bit little-endian access
-
     // verify that we're talking to an ina233
     const modelBuf = this.#io.readBuffer(COMMANDS.MFR_MODEL, 7)
     const model = new TextDecoder().decode(new Uint8Array(modelBuf, 1))
@@ -95,12 +105,16 @@ export default class INA233 {
       return
     }
 
+    // ensure certain configuration options get set now
     if (options.shuntOhms == undefined) options.shuntOhms = 0.01
     if (options.maxCurrent == undefined) options.maxCurrent = 10
+    if (options.averaging == undefined) options.averaging = 1
+
     this.configure(options)
   }
 
   close() {
+    this.#io?.close()
     this.#io = null
   }
 
@@ -115,9 +129,9 @@ export default class INA233 {
     }
 
     // device config
-    if (options.polarity != undefined || options.clearEnergy != undefined) {
+    if (options.polarity != undefined) {
       const pol = (options.polarity || POLARITY.BOTH) & 0x03
-      const clr = options.clearEnergy ? 6 : 2 // latch alerts
+      const clr = 6 // auto-clear accumulator and latch alerts
       this.#io.writeUint8(COMMANDS.MFR_DEVICE_CONFIG, (pol << 4) | clr)
     }
 
@@ -127,9 +141,10 @@ export default class INA233 {
       options.aTime != undefined ||
       options.averaging != undefined
     ) {
-      const avg = Math.round(Math.log2(options.averaging || 1) / 2) & 7
+      const avg = (options.averaging ?? ADC.AVG_1) & 7
       const vTime = (options.vTime ?? ADC.TIME_1100) & 7
       const aTime = (options.aTime ?? ADC.TIME_1100) & 7
+      this.#accum_ival = (ADC_TIME[vTime] + ADC_TIME[aTime]) * ADC_AVG[avg] // usec
       const mode = 0x07 // continuous mode
       this.#io.writeUint16(COMMANDS.MFR_ADC_CONFIG, (avg << 9) | (vTime << 5) | (aTime << 3) | mode)
     }
@@ -139,13 +154,26 @@ export default class INA233 {
     this.#e_at = Time.ticks
   }
 
+  // given a steady-state power consumption, calculate the max interval for calling
+  // sample() in ticks (milliseconds)
+  maxInterval(power: number): number {
+    const samples = Math.floor(2 ** 24 / (power / this.#pin_fct))
+    const ticks = (samples * this.#accum_ival) / 1000
+    return ticks
+  }
+
+  // return the sampling interval in microseconds
+  get sampleInterval(): number {
+    return this.#accum_ival
+  }
+
   // clear energy accumulator
   clear(): void {
     this.#io.write(COMMANDS.CLEAR_EIN)
     this.#e_at = Time.ticks
   }
 
-  sample(): Sample {
+  sample(s?: Object): Sample {
     // read raw data
     const vin = this.#io.readUint16(COMMANDS.READ_VIN)
     const iin = (this.#io.readUint16(COMMANDS.READ_IIN) << 16) >> 16
@@ -154,6 +182,8 @@ export default class INA233 {
     const e_at = Time.ticks
     this.#io.readBuffer(COMMANDS.READ_EIN, einRaw)
     if (einRaw[0] != 6) throw new Error("INA233: bad ein length")
+    const positive = this.#positive
+    this.#positive = iin >= 0 // applies to next sample
 
     // put together accumulated energy reading
     const count = (einRaw[6] << 16) | (einRaw[5] << 8) | einRaw[4]
@@ -164,13 +194,17 @@ export default class INA233 {
     this.#e_at = e_at
 
     // return scaled values
-    const s = {
-      v: vin * 1.25e-3, // 1.25mV/LSB
-      i: iin * this.#iin_fct,
-      p: pin * this.#pin_fct,
-      p_avg,
-      e: (ein * 1000) / dt, // 1000 converts dt from ms to s
+    const sample = (s ?? {}) as Sample
+    sample.v = vin * 1.25e-3 // 1.25mV/LSB
+    sample.a = iin * this.#iin_fct
+    sample.w = pin * this.#pin_fct
+    sample.w_avg = p_avg
+    sample.j = (ein * 1000) / dt // 1000 converts dt from ms to s
+    if (!positive) {
+      sample.w = -sample.w
+      sample.w_avg = -sample.w_avg
+      sample.j = -sample.j
     }
-    return s
+    return sample
   }
 }

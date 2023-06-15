@@ -2,8 +2,9 @@
 export IDF_PATH=/home/sw/moddable/esp-idf
 export MODTVE=/home/src/moddable
 export UPLOAD_PORT=/dev/ttyACM0
+export FONTBM=/usr/bin/fontbm
 
 # configured for Lolin C3 pico board
 npx nodemon -V -w . -w $MODTVE/modules -e 'js ts json c' \
-    -x 'mcconfig -d -m -p esp32/lolin_c3_pico || exit 1'
+    -x 'mcconfig -d -m -p esp32/lolin_c3_pico -f gray256 || exit 1'
 ;;
