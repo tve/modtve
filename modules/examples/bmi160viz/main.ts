@@ -1,12 +1,33 @@
 import Timer from "timer"
 import Time from "time"
-import { startIMU, sampleIMU, stopIMU } from "./imu"
-import { Quaternion, Euler } from "embedded:lib/IMU/fusion"
+import BMI160 from "embedded:sensor/Accelerometer-Gyroscope/BMI160"
+import { AHRS, Quaternion, Euler } from "embedded:lib/IMU/AHRS"
 import { Matrix4, Vec4 } from "./hack3d"
 import Poco, { PocoPrototype } from "commodetto/Poco"
 import { Outline } from "commodetto/outline"
 import parseBMF from "commodetto/parseBMF"
 import Resource from "Resource"
+import Worker from "worker"
+
+// IMU "calibration" zero offsets, this will vary with each device
+//const ZERO = Object.freeze(Uint8Array.of(5, 1, 255, 252, 1, 254, 243)) // zero offsets for IMU
+const ZERO = Object.freeze([5, 1, 255, 252, 1, 254, 243]) // zero offsets for IMU
+
+// Options to instantiate IMU sensor
+const IMUOptions = {
+  imu: {
+    io: BMI160,
+    sensor: {
+      ...device.I2C.default,
+      io: device.io.SMBus,
+      address: 0x69, // non-standard on my breakout board
+      onError: (err: string) => trace(`BMI160: ${err}\n`),
+      use_fifo: true,
+      zero: ZERO,
+    },
+  },
+  upright: false, // I'm holding the IMU board upside-down
+}
 
 interface Model {
   vertices: Vec4[]
@@ -14,10 +35,11 @@ interface Model {
   colors: number[]
 }
 
+// Make a rectangular box model that resembles the little IMU breakout board
 function makeModel(poco: PocoPrototype): Model {
   const dx = 0.25,
     dy = 0.5,
-    dz = 0.15
+    dz = 0.05
   const vertices = [
     // comments for original axes where Z points into the scene
     { x: -dx, y: dy, z: -dz, w: 1 }, // left top front
@@ -49,6 +71,7 @@ function makeModel(poco: PocoPrototype): Model {
   return { vertices, faces, colors }
 }
 
+// draw the X, Y, and Z axes (X in red, others blue)
 function makeAxes(poco: PocoPrototype): Model {
   const d = 0.5
   const vertices = [
@@ -67,6 +90,7 @@ function makeAxes(poco: PocoPrototype): Model {
   return { vertices, faces, colors }
 }
 
+// project a set of vertices onto the screen
 function projectVertices(vertices: Vec4[], mvp: Matrix4, sx: number, sy: number): Vec4[] {
   return vertices.map(vertex => {
     // model -> world
@@ -90,6 +114,8 @@ function projectVertices(vertices: Vec4[], mvp: Matrix4, sx: number, sy: number)
   })
 }
 
+// sort faces by average z value so we can draw them (more or less) from far to near
+// (proper hidden face elimination would be nice...)
 function sortFaces(model: Model) {
   let { vertices, faces, colors } = model
   const depths = faces.map((face, ix) => {
@@ -109,6 +135,7 @@ interface Bounds {
   y2: number
 }
 
+// calculate the screen bounds of a set of vertices to limit the area being redrawn
 function calcBounds(vertices: Vec4[]): Bounds {
   const nb = { x1: vertices[0].x, y1: vertices[0].y, x2: vertices[0].x, y2: vertices[0].y }
   for (const v of vertices) {
@@ -121,12 +148,15 @@ function calcBounds(vertices: Vec4[]): Bounds {
   return nb
 }
 
+// draw a whole model
 function drawModel(poco: PocoPrototype, model: any, fill: boolean = false) {
   const { vertices, faces, colors } = model
+  let outlines = Array(faces.length)
   for (let i = 0; i < faces.length; i++) {
-    const points = new Array(faces[i].length * 2)
-    for (let v = 0; v < faces[i].length; v++) {
-      const vtx = vertices[faces[i][v]]
+    const face = faces[i]
+    const points = new Array(face.length * 2)
+    for (let v = 0; v < face.length; v++) {
+      const vtx = vertices[face[v]]
       points[2 * v + 0] = vtx.x
       points[2 * v + 1] = vtx.y
     }
@@ -134,7 +164,9 @@ function drawModel(poco: PocoPrototype, model: any, fill: boolean = false) {
     const path = Outline.PolygonPath(...points)
     const outline = fill ? Outline.fill(path) : Outline.stroke(path)
     poco.blendOutline(colors[i], 255, outline)
+    outlines[i] = outline // to prevent GC
   }
+  return outlines
 }
 
 // display the roll, pitch, yaw, fps in text form
@@ -169,7 +201,7 @@ export default function main() {
   const font_sml = parseBMF(new Resource("OpenSans-Regular-24.bf4"))
   const font_med = parseBMF(new Resource("OpenSans-Semibold-28.bf4"))
 
-  const poco = new Poco(screen, { rotation: 0, pixels: 8 * screen.width })
+  const poco = new Poco(screen, { rotation: 0, pixels: 32 * screen.width })
   const bg = poco.makeColor(0, 0, 64)
   const red = poco.makeColor(255, 0, 0)
   const grn = poco.makeColor(0, 255, 0)
@@ -247,21 +279,57 @@ export default function main() {
 
     // draw models
     projBoxModel = sortFaces(projBoxModel)
-    drawModel(poco, projAxisModel, false)
-    drawModel(poco, projBoxModel, true)
+    const o1 = drawModel(poco, projAxisModel, false)
+    const o2 = drawModel(poco, projBoxModel, true)
     poco.end()
 
     drawRPY(poco, eu, fps, font_sml, bg, ylw)
   }
 
-  startIMU()
-  let run = true
-  function loop() {
-    const q = sampleIMU()
-    if (q) updateDisplay(q)
-    if (run) Timer.set(loop, 0)
+  if (false) {
+    // Simple version without worker: calls AHRS and then calls updateDisplay
+    const ahrs = new AHRS({
+      imu: {
+        io: BMI160,
+        sensor: {
+          ...device.I2C.default,
+          io: device.io.SMBus,
+          address: 0x69, // non-standard on my breakout board
+          onError: (err: string) => trace(`BMI160: ${err}\n`),
+          use_fifo: true,
+          zero: ZERO,
+        },
+        upright: false,
+      },
+    })
+
+    const ticker = Timer.repeat(() => {
+      const q = ahrs.sample()
+      if (q) updateDisplay(q)
+    }, 1)
+
+    Timer.set(() => {
+      Timer.clear(ticker)
+      ahrs.close()
+      trace("=== The END ===\n")
+    }, 60000)
+  } else {
+    // More involved version using a worker so AHRS and updateDisplay can run in parallel.
+    const imuWorker = new Worker("imu_worker")
+
+    imuWorker.onmessage = (msg: Quaternion | string) => {
+      //trace(`Worker: ${JSON.stringify(msg)}\n`)
+      imuWorker.postMessage({ cmd: "sample" })
+      if (msg instanceof Quaternion) updateDisplay(msg)
+    }
+
+    imuWorker.postMessage({ cmd: "start", options: IMUOptions }) // sketchy marshalling of IMUoptions!
+
+    // Timer.set(() => {
+    //   imuWorker.postMessage({ cmd: "stop" })
+    //   trace("=== The END ===\n")
+    // }, 60000)
   }
-  Timer.set(loop, 0)
 
   // Timer.set(() => {
   //   if (imu) imu.postMessage({ cmd: "stop" })

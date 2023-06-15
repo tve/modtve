@@ -7,7 +7,7 @@
     "$(MODDABLE)/modules/io/manifest.json",
     "$(MODDABLE)/modules/commodetto/outline/manifest.json",
     "../../lib/fusion/manifest.json",
-    "../../lib/meminfo/manifest.json",
+    "../../lib/ahrs/manifest.json",
     "../../drivers/sensors/bmi160/manifest.json"
   ],
   "modules": {

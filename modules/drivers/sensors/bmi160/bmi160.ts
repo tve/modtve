@@ -72,6 +72,8 @@ export interface Options {
   }
   onError?: (error: string) => void
   fifo?: boolean // whether to enable the FIFO for batch reading
+  accelUnit?: "g" | "m/s^2" | "m/s2" // default m/s^2
+  zero?: Uint8Array // offsets to zero accel/gyro ("calibrate"), typ. obtained via zero()
 }
 
 export interface Accelerometer {
@@ -96,6 +98,8 @@ export default class BMI160 {
   #io
   #regsRaw = new ArrayBuffer(12) // accel
   #regsView: DataView
+  #use_fifo = false
+  #fifo_remain = 0 // number of samples known to be available in the fifo
   #fifo_next?: number // ticks for expected next fifo sample
   #fifo_intv = 10 // fifo interval in ms (fixed for now)
   #accelRange = AccelRange.RANGE_2_G
@@ -116,39 +120,37 @@ export default class BMI160 {
 
     this.#regsView = new DataView(this.#regsRaw) // for 16-bit little-endian access
 
-    // read register 0x7F to ensure SPI works, see datasheet section 3.2.1
-    io.readUint8(0x7f)
+    try {
+      // read register 0x7F to ensure SPI works, see datasheet section 3.2.1
+      io.readUint8(0x7f)
 
-    // verify that we're indee talking to a BMI160
-    const gxlID = io.readUint8(REGISTERS.WHO_AM_I)
-    if (gxlID != EXPECTED_WHO_AM_I) {
-      this.#onError?.("unexpected sensor")
+      // verify that we're indee talking to a BMI160
+      const gxlID = io.readUint8(REGISTERS.WHO_AM_I)
+      if (gxlID != EXPECTED_WHO_AM_I) {
+        this.#onError?.("unexpected sensor")
+        this.close()
+        return
+      }
+
+      // device reset
+      const t0 = Time.ticks
+      this.runCommand(0xb6) // soft-reset
+      //trace("BMI160 reset cmd " + (Time.ticks - t0) + " ms\n")
+
+      // power up accelerometer and gyroscope
+      this.runCommand(0x11) // set ACC normal mode
+      this.runCommand(0x15) // set GYR normal mode
+
+      // wait for everything to power up
+      while ((io.readUint8(REGISTERS.PMU_STATUS) & 0x3f) != 0x14) {
+        Timer.delay(0)
+      }
+
+      this.configure(options)
+    } catch (error) {
+      this.#onError?.("BMI160: " + error)
       this.close()
-      return
     }
-
-    // device reset
-    const t0 = Time.ticks
-    this.runCommand(0xb6) // soft-reset
-    trace("BMI160 reset cmd " + (Time.ticks - t0) + " ms\n")
-    //Timer.delay(10)
-
-    // power up accelerometer and gyroscope
-    this.runCommand(0x11) // set ACC normal mode
-    this.runCommand(0x15) // set GYR normal mode
-
-    // enable FIFO
-    io.writeUint8(REGISTERS.FIFO_CONFIG + 1, 0xc0) // acc+gyr, no hdr
-
-    // wait for everything to power up
-    while ((io.readUint8(REGISTERS.PMU_STATUS) & 0x3f) != 0x14) {
-      Timer.delay(0)
-    }
-    trace("BMI160 ready after " + (Time.ticks - t0) + " ms\n")
-
-    trace(`BMI.off6: ${io.readUint8(0x77).toString(16)}\n`)
-
-    this.configure(options)
 
     // const {alert, onAlert} = options;
     // if (alert && onAlert) {
@@ -170,9 +172,34 @@ export default class BMI160 {
     const io = this.#io
 
     if (options.fifo != undefined) {
+      this.#use_fifo = options.fifo
+      this.#fifo_remain = 0
       io.writeUint8(REGISTERS.FIFO_CONFIG + 1, options.fifo ? 0xc0 : 0)
       this.runCommand(0xb0) // fifo-flush
     }
+
+    if (options.accelUnit != undefined) {
+      switch (options.accelUnit) {
+        case "g":
+          this.#unit_fct = undefined
+          break
+        case "m/s2":
+        case "m/s^2":
+          this.#unit_fct = GtoMS2
+          break
+        default:
+          throw new Error("unknown unit (use 'g' or 'm/s2')")
+      }
+    }
+
+    // write offsets previously returned by zero()
+    if (options.zero != undefined) {
+      if (options.zero.length != 7) throw new Error("invalid zero length")
+      this.#io.writeBuffer(REGISTERS.OFF0, options.zero)
+    }
+
+    // ranges and sample rates should be configurable, most of the code is there, but
+    // someone needs to go through all the details...
 
     // 	if (undefined !== options.range) {
     // 		this.#range = options.range | 0b11;
@@ -192,41 +219,24 @@ export default class BMI160 {
   }
 
   close() {
-    // this.#monitor?.close();
-    // this.#monitor = undefined;
-    this.#io.close()
+    this.#io?.close()
     this.#io = undefined
   }
 
-  set unit(f: string) {
-    switch (f) {
-      case "g":
-        this.#unit_fct = undefined
-        break
-      case "m/s2":
-        this.#unit_fct = GtoMS2
-        break
-      default:
-        throw new Error("unknown unit (use 'g' or 'm/s2')")
-    }
-  }
-
   temperature() {
-    const io = this.#io
-    const raw = this.readInt16(REGISTERS.TEMP)
+    const raw = this.#readInt16(REGISTERS.TEMP)
     return (raw * 64) / 0x8000 + 23
   }
 
-  drop_data() {
-    const io = this.#io
-    io.readBuffer(REGISTERS.DATA, this.#regsRaw)
-  }
+  // drop_data() {
+  //   const io = this.#io
+  //   io.readBuffer(REGISTERS.DATA, this.#regsRaw)
+  // }
 
   // zero-out the readings, return offsets that can be used to restore them
-  // note: these can be stored in NVRAM but that can only be written 14 times
+  // note: these could be stored in NVRAM but that can only be written 14 times...
   zero(upsidedown: boolean = false): Uint8Array {
     const io = this.#io
-    const t0 = Time.ticks
     const v = 0x7c | (upsidedown ? 2 : 1)
     io.writeUint8(REGISTERS.FOC_CONF, v) // enable accel and gyro calibration
     this.runCommand(0x03) // CMD_START_FOC
@@ -236,22 +246,13 @@ export default class BMI160 {
     }
     // ensure the offsets are actually taken into account
     io.writeUint8(REGISTERS.OFF6, io.readUint8(REGISTERS.OFF6) | 0xc0)
-    trace(`BMI160 zero took ${Time.ticks - t0} ms\n`)
     // return the calibration offsets
     io.readBuffer(REGISTERS.OFF0, this.#regsRaw)
-    return new Uint8Array(this.#regsRaw, 0, 7)
+    return new Uint8Array(this.#regsRaw.slice(0, 7))
   }
 
-  // write offsets previously returned by zero()
-  setZero(zero: Uint8Array) {
-    if (zero.length != 7) throw new Error("invalid zero length")
-    const io = this.#io
-    io.writeBuffer(REGISTERS.OFF0, zero)
-  }
-
-  batch(callback: BatchCallback): void {
-    const io = this.#io
-    let num = io.readUint16(REGISTERS.FIFO_LENGTH)
+  #query_fifo() {
+    let num = this.#io.readUint16(REGISTERS.FIFO_LENGTH)
     let now = Time.ticks
     if (num > 900) trace(`BMI160 FIFO: ${num} bytes!\n`)
     const snum = Math.idiv(num, FIFO.PACKET_LENGTH)
@@ -263,43 +264,37 @@ export default class BMI160 {
     // see whether we can continue from previous batch instead
     if (snum < FIFO.MAX_PACKETS && this.#fifo_next != undefined) {
       // FIFO didn't fill, continue timestamps from previous batch
-      const tsl = this.#fifo_next + span // timestamp for last sample
+      const tsLast = this.#fifo_next + span // timestamp for last sample
       // check for BMI clock drift WRT ours
-      if (tsl > now - this.#fifo_intv && tsl < now + this.#fifo_intv) ts = this.#fifo_next
+      if (tsLast > now - this.#fifo_intv && tsLast < now + this.#fifo_intv) ts = this.#fifo_next
     }
-
-    // read samples from fifo, we do this one sample at a time to keep memory usage low
-    // reading the full fifo at once would bring less than 2x improvement on the raw i2c
-    // read and even less when accounting for converting & processing the data
-    for (let i = 0; i < snum; ++i) {
-      const got = io.readBuffer(REGISTERS.FIFO_DATA, this.#regsRaw)
-      if (got != FIFO.PACKET_LENGTH) throw new Error("BMI160: short read")
-      const g = this.gyrFromRaw()
-      const a = this.accelFromRaw()
-      callback(ts, g, a)
-      ts += this.#fifo_intv
-    }
+    // prep vars for pop_fifo
     this.#fifo_next = ts
+    this.#fifo_remain = snum
   }
 
-  hexDump(buf: Uint8Array) {
-    let s = "@00:"
-    for (let i = 0; i < buf.length; ++i) {
-      if (i % 48 == 0 && i > 0) s += "\n@" + i.toString(16) + ": "
-      else if (i % 12 == 0) s += " "
-      const v = buf[i]
-      s += v < 16 ? "0" + v.toString(16) : v.toString(16)
-    }
-    trace(s + "\n")
+  // pop a sample from the fifo and return it
+  #pop_fifo(s?: Sample): Sample | undefined {
+    const raw = this.#io.readBuffer(REGISTERS.FIFO_DATA, this.#regsRaw)
+    if (raw != FIFO.PACKET_LENGTH) throw new Error("BMI160: short read")
+    const ret = s || ({} as Sample)
+    ret.ticks = this.#fifo_next!
+    this.#fifo_next! += this.#fifo_intv
+    this.#fifo_remain--
+    ret.gyroscope = this.#gyrFromRaw(ret.gyroscope)
+    ret.accelerometer = this.#accelFromRaw(ret.accelerometer)
+    return ret
   }
 
-  sample(): Sample | undefined {
+  // waits up to 10ms for a fresh sample to be available and returns it
+  // throws if no sample can be obtained (error 'cause sample rate should produce one!)
+  latest(s?: Sample): Sample | undefined {
     const io = this.#io
 
+    // read status looking for a sample being available, use a 10ms timeout (100Hz sample rate)
     const t0 = Time.ticks
     let status = io.readUint8(REGISTERS.STATUS)
-    // 10ms timeout
-    while ((status & 0xc0) != 0xc0 && Time.ticks - t0 < 10) {
+    while ((status & 0xc0) != 0xc0 && Time.ticks - t0 <= 10) {
       status = io.readUint8(REGISTERS.STATUS)
     }
     if ((status & 0xc0) != 0xc0) {
@@ -309,37 +304,46 @@ export default class BMI160 {
 
     io.readBuffer(REGISTERS.DATA, this.#regsRaw)
     const ts = Time.ticks
-    return { ticks: ts, gyroscope: this.gyrFromRaw(), accelerometer: this.accelFromRaw() }
+    const ret = s || ({} as Sample)
+    ret.ticks = ts
+    ret.gyroscope = this.#gyrFromRaw(ret.gyroscope)
+    ret.accelerometer = this.#accelFromRaw(ret.accelerometer)
+    return ret
   }
 
-  gyrFromRaw(): Gyroscope {
-    return {
-      x: this.#regsView.getInt16(0, true) * GYR_SCALER[this.#gyroRange], // true->littleEndian
-      y: this.#regsView.getInt16(2, true) * GYR_SCALER[this.#gyroRange],
-      z: this.#regsView.getInt16(4, true) * GYR_SCALER[this.#gyroRange],
-    }
+  sample(s?: Sample): Sample | undefined {
+    if (!this.#use_fifo) return this.latest(s)
+    if (this.#fifo_remain == 0) this.#query_fifo()
+    return this.#fifo_remain > 0 ? this.#pop_fifo(s) : undefined
   }
 
-  accelFromRaw(): Accelerometer {
-    const a = {
-      x: this.#regsView.getInt16(6, true) * ACC_SCALER[this.#accelRange],
-      y: this.#regsView.getInt16(8, true) * ACC_SCALER[this.#accelRange],
-      z: this.#regsView.getInt16(10, true) * ACC_SCALER[this.#accelRange],
-    }
+  #gyrFromRaw(g?: Gyroscope): Gyroscope {
+    const ret = g || ({} as Gyroscope)
+    ret.x = this.#regsView.getInt16(0, true) * GYR_SCALER[this.#gyroRange] // true->littleEndian
+    ret.y = this.#regsView.getInt16(2, true) * GYR_SCALER[this.#gyroRange]
+    ret.z = this.#regsView.getInt16(4, true) * GYR_SCALER[this.#gyroRange]
+    return ret
+  }
+
+  #accelFromRaw(a?: Accelerometer): Accelerometer {
+    const ret = a || ({} as Accelerometer)
+    ret.x = this.#regsView.getInt16(6, true) * ACC_SCALER[this.#accelRange]
+    ret.y = this.#regsView.getInt16(8, true) * ACC_SCALER[this.#accelRange]
+    ret.z = this.#regsView.getInt16(10, true) * ACC_SCALER[this.#accelRange]
     if (this.#unit_fct !== undefined) {
-      a.x = a.x * this.#unit_fct
-      a.y = a.y * this.#unit_fct
-      a.z = a.z * this.#unit_fct
+      ret.x = ret.x * this.#unit_fct
+      ret.y = ret.y * this.#unit_fct
+      ret.z = ret.z * this.#unit_fct
     }
-    return a
+    return ret
   }
 
   // read 16-bit signed integer register
-  readInt16(reg: number) {
+  #readInt16(reg: number) {
     return (this.#io.readUint16(reg) << 16) >> 16
   }
 
-  // write a command to the CMD register and wait for the sommand to complete
+  // write a command to the CMD register and wait for the command to complete
   runCommand(cmd: number) {
     this.#io.writeUint8(REGISTERS.CMD, cmd)
     //trace("BMI160 command " + cmd.toString(16) + "\n")
@@ -356,4 +360,3 @@ export default class BMI160 {
     throw new Error("command timeout")
   }
 }
-Object.freeze(BMI160.prototype)

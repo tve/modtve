@@ -1,0 +1,6 @@
+{
+  "modules": {
+    "embedded:lib/IMU/AHRS": "./ahrs"
+  },
+  "preload": ["embedded:lib/IMU/AHRS"]
+}
