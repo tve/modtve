@@ -1,0 +1,6 @@
+{
+  "modules": {
+    "embedded:sensor/Power-Management/battery": "./battery"
+  },
+  "preload": ["embedded:sensor/Power-Management/battery"]
+}
