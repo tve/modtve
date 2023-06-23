@@ -1,0 +1,9 @@
+#! /bin/sh
+# configured for Lolin C3 pico board
+export UPLOAD_PORT=/dev/ttyACM0
+export IDF_PATH=/home/sw/moddable/esp-idf
+export MODTVE=/home/src/moddable
+export FONTBM=/usr/bin/fontbm
+
+npx nodemon -V -w . -w $MODTVE/modules -e 'js ts json' \
+    -x 'mcconfig -d -m -p esp32/lolin_c3_pico -f gray256 || exit 1'

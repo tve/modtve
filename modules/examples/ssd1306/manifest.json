@@ -1,0 +1,22 @@
+{
+  "include": [
+    "$(MODDABLE)/examples/manifest_base.json",
+    "$(MODDABLE)/examples/manifest_commodetto.json",
+    "$(MODDABLE)/modules/io/manifest.json",
+    "$(MODULES)/data/text/decoder/manifest.json",
+    "$(MODTVE)/modules/drivers/displays/ssd1306-io/manifest.json"
+  ],
+  "modules": {
+    "*": "./main"
+  },
+  "resources": {
+    "*-mask": [
+      "$(MODDABLE)/examples/assets/fonts/OpenSans-Regular-24",
+      "$(MODDABLE)/examples/assets/fonts/OpenSans-Semibold-28",
+      {
+        "source": "$(MODTVE)/fonts/OpenSansCondensed-Bold",
+        "size": 30
+      }
+    ]
+  }
+}
