@@ -40,7 +40,7 @@
       "$(MODDABLE)/examples/assets/fonts/OpenSans-Regular-24",
       "$(MODDABLE)/examples/assets/fonts/OpenSans-Semibold-28",
       {
-        "source": "$(MODTVE)/fonts/OpenSansCondensed-Bold",
+        "source": "../../../fonts/OpenSansCondensed-Bold",
         "size": 30
       }
     ]
