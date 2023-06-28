@@ -137,17 +137,17 @@ interface Bounds {
 
 // calculate the screen bounds of a set of vertices to limit the area being redrawn
 function calcBounds(vertices: Vec4[]): Bounds {
-  const nb = { x1: vertices[0].x, y1: vertices[0].y, x2: vertices[0].x, y2: vertices[0].y }
-  for (const v of vertices) {
+  let x1 = vertices[0].x, y1 = vertices[0].y, x2 = vertices[0].x, y2 = vertices[0].y;
+  for (let i = 0, length = vertices.length; i < length; i++) {
+    const v = vertices[i];
     // +/-1 is due to width of stroke in Outline.stroke()
-    if (v.x <= nb.x1) nb.x1 = v.x - 1
-    if (v.x >= nb.x2) nb.x2 = v.x + 1
-    if (v.y <= nb.y1) nb.y1 = v.y - 1
-    if (v.y >= nb.y2) nb.y2 = v.y + 1
+    if (v.x <= x1) x1 = v.x - 1
+    if (v.x >= x2) x2 = v.x + 1
+    if (v.y <= y1) y1 = v.y - 1
+    if (v.y >= y2) y2 = v.y + 1
   }
-  return nb
+  return {x1, x2, y1, y2}
 }
-
 // draw a whole model
 function drawModel(poco: PocoPrototype, model: any, fill: boolean = false) {
   const { vertices, faces, colors } = model
