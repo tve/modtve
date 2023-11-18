@@ -1,0 +1,9 @@
+#! /bin/sh
+# configured for Lolin C3 pico board
+export UPLOAD_PORT=/dev/ttyACM0
+export IDF_PATH=/home/sw/moddable/esp-idf5
+set -x
+
+npx nodemon -V -w . -w ../../drivers/sensors/hx711 -e 'js ts json c' \
+    -x 'mcconfig -d -m -p esp32/lolin_c3_pico || exit 1'
+exit
