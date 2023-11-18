@@ -1,0 +1,5 @@
+# Disable core dumps when panicing
+CONFIG_ESP_COREDUMP_TO_FLASH_OR_UART=ESP_COREDUMP_ENABLE_TO_NONE
+# set individual configs 'cause mc tools don't handle overrides properly
+CONFIG_ESP_COREDUMP_ENABLE_TO_UART=n
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y

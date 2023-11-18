@@ -1,0 +1,8 @@
+{
+  "modules": {
+    "embedded:system/WatchdogTimer": ["./wdt", "./modWDT.c"]
+  },
+  "build": {
+    "SDKCONFIGPATH": "./sdkconfig"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "include": [
+    "$(MODDABLE)/examples/manifest_base.json",
+    "$(MODDABLE)/examples/manifest_typings.json",
+    "../../drivers/wdt/manifest.json"
+  ],
+  "modules": {
+    "*": ["./main"]
+  },
+  "build": {
+    "SDKCONFIGPATH": "./sdkconfig"
+  }
+}
